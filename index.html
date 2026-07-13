@@ -65,10 +65,10 @@
     </div>
 </div>
 
-<!-- TAUTAN CDN MEDIAPIPE -->
-<script src="https://jsdelivr.net"></script>
-<script src="https://jsdelivr.net"></script>
-<script src="https://jsdelivr.net"></script>
+<!-- PEMBATALAN URL CDN YANG RUSAK, DIGANTI KE ALAMAT STABIL RESMI -->
+<script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+<script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+<script src="https://jsdelivr.net" crossorigin="anonymous"></script>
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -81,7 +81,9 @@ let cycleStartTime = null, currentStage = "WAITING", liveTimerInterval = null;
 let analysisRunning = false;
 window.lastMovementTime = performance.now();
 let cycleHistory = [];
-window.lastHandPosition = null;
+
+// Menggunakan penyimpanan array terpisah agar koordinat Tangan Kiri dan Kanan tidak saling menimpa
+let lastPositions = { "Left": null, "Right": null };
 
 function applyMirrorEffect() {
     if (currentFacingMode === "user") {
@@ -191,18 +193,23 @@ function onResults(results){
 
             if(hand.score > maxScore) maxScore = hand.score;
 
+            let label = hand.label;
             if (currentFacingMode === "user") {
-                if(hand.label === "Left") rightDetected = true; else leftDetected = true;
+                if(label === "Left") rightDetected = true; else leftDetected = true;
             } else {
-                if(hand.label === "Left") leftDetected = true; else rightDetected = true;
+                if(label === "Left") leftDetected = true; else rightDetected = true;
             }
 
+            // Perbaikan Logika Deteksi Pergerakan Titik Wrist [0] Berdasarkan Sisi Tangan
             let wrist = pts[0]; 
-            if(window.lastHandPosition){
-                let distance = Math.sqrt(Math.pow(wrist.x - window.lastHandPosition.x, 2) + Math.pow(wrist.y - window.lastHandPosition.y, 2));
-                if(distance > 12) handMoving = true;
+            let lastPos = lastPositions[label];
+            if(lastPos){
+                let distance = Math.sqrt(Math.pow(wrist.x - lastPos.x, 2) + Math.pow(wrist.y - lastPos.y, 2));
+                if(distance > 10) { // Sensitivitas dioptimalkan ke 10 piksel agar responsif
+                    handMoving = true;
+                }
             }
-            window.lastHandPosition = wrist;
+            lastPositions[label] = wrist;
         }
         document.getElementById("conf").innerHTML = Math.round(maxScore * 100) + "%";
     } else {
