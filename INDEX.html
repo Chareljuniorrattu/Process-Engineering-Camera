@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>PE Motion Analysis System</title>
+<style>
+    #canvas{
+    width:100%;
+    height:100%;
+}
+*{ margin:0; padding:0; box-sizing:border-box; font-family:Arial,sans-serif; }
+body{ background:#111827; color:white; }
+header{ background:#0f172a; padding:15px; text-align:center; font-size:26px; font-weight:bold; letter-spacing:1px; }
+.container{ display:flex; padding:20px; gap:20px; }
+.left{ flex:2; } .right{ flex:1; }
+.card{ background:#1f2937; border-radius:10px; padding:15px; margin-bottom:15px; box-shadow:0 0 10px rgba(0,0,0,.4); position:relative; }
+.card h2{ margin-bottom:10px; font-size:18px; }
+.status{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+.box{ background:#111827; padding:12px; border-radius:8px; text-align:center; }
+.activityLog{ height:250px; overflow:auto; background:#111827; padding:10px; border-radius:8px; }
+.activityLog div{ padding:5px; border-bottom:1px solid #333; font-size:14px; }
+button{ width:100%; padding:12px; background:#2563eb; border:none; border-radius:8px; color:white; font-size:16px; cursor:pointer; transition: background 0.2s; }
+button:hover{ background:#1d4ed8; }
+</style>
+</head>
+<body>
+<header>PE MOTION ANALYSIS SYSTEM</header>
+<div class="container">
+    <div class="left">
+        <div class="card">
+            <h2>Live Camera</h2>
+            <div id="cameraContainer" style="position:relative; width:100%; border-radius:10px; overflow:hidden;">
+                <video id="video" autoplay playsinline muted style="
+display:block;
+width:100%;
+height:auto;
+border-radius:10px;
+object-fit:cover;
+filter:none;
+z-index:1;">
+</video>
+                <canvas id="canvas" style="
+position:absolute;
+top:0;
+left:0;
+pointer-events:none;
+z-index:2;
+">
+</canvas>
+            </div>
+        </div>
+    </div>
+    <div class="right">
+        <div class="card">
+            <h2>Status</h2>
+            <div class="status">
+                <div class="box">Right Hand<br><b id="rightStatus">Not Detected</b></div>
+                <div class="box">Left Hand<br><b id="leftStatus">Not Detected</b></div>
+                <div class="box">FPS<br><b id="fps">0</b></div>
+                <div class="box">Confidence<br><b id="conf">0%</b></div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Cycle Time</h2>
+            <h1 id="cycle" style="font-size: 42px; color: #3b82f6;">0.00 s</h1>
+        </div>
+        <div class="card">
+            <h2>Activity Log</h2>
+            <div class="activityLog" id="log"><div>System Ready...</div></div>
+        </div>
+        <div class="card"><button onclick="startCamera()">START CAMERA</button></div>
+    </div>
+</div>
+
+<div class="card">
+    <button onclick="startAnalysis()">
+        START ANALYSIS
+    </button>
+    <br><br>
+    <button onclick="stopAnalysis()" style="background:#dc2626">
+        STOP ANALYSIS
+    </button>
+</div>
+<!-- PERBAIKAN TAUTAN CDN MEDIAPIPE YANG RUSAK DI KODE ASLI ANDA -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let camera, hands, isCameraRunning = false;
+let fps = 0, frameCount = 0, lastTime = performance.now();
+let cycleStartTime = null, currentStage = "WAITING", liveTimerInterval = null;
+let lastInZone1 = false, lastInZone2 = false;
+let analysisRunning=false;
+window.lastMovementTime=performance.now();
+let cycleHistory=[];
+
+async function startCamera(){
+    if(isCameraRunning) return;
+    isCameraRunning = true;
+    try {
+        hands = new Hands({
+    locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+
+        camera = new Camera(video,{
+    facingMode:"user",
+    width: {ideal:1280},
+    height:{ideal:720},
+    onFrame: async () => {
+        await hands.send({image:video});
+    }
+});
+        await camera.start();
+
+// jangan ubah exposure kamera
+
+addLog("Camera Started");
+startLiveTimer();
+    } catch(err) {
+        console.error(err); alert("Gagal menjalankan kamera: " + err); isCameraRunning = false;
+    }
+
+    let stream = video.srcObject;
+
+if(stream){
+
+let track = stream.getVideoTracks()[0];
+
+}
+}
+
+
+
+function addLog(text){
+    const log = document.getElementById("log");
+    const div = document.createElement("div");
+    div.innerHTML = new Date().toLocaleTimeString() + " : " + text;
+    log.prepend(div);
+}
+
+function resizeCanvas(){
+
+    if(!video.videoWidth) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    canvas.style.width = video.clientWidth + "px";
+    canvas.style.height = video.clientHeight + "px";
+
+}
+window.addEventListener('resize', resizeCanvas);
+
+function startLiveTimer() {
+
+    if(liveTimerInterval) clearInterval(liveTimerInterval);
+
+    liveTimerInterval=setInterval(()=>{
+
+        if(
+            analysisRunning &&
+            cycleStartTime &&
+            currentStage==="STARTED"
+        ){
+
+            document.getElementById("cycle").innerHTML =
+            ((performance.now()-cycleStartTime)/1000).toFixed(2)+" s";
+
+        }
+
+    },50);
+
+}
+
+function onResults(results){
+
+    resizeCanvas();
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    let rightDetected=false;
+    let leftDetected=false;
+    let maxScore=0;
+
+    let handMoving=false;
+
+    if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+
+        for(let i=0;i<results.multiHandLandmarks.length;i++){
+
+            const landmarks=results.multiHandLandmarks[i];
+            const hand=results.multiHandedness[i];
+
+            const pts = landmarks.map(p=>({
+    x:p.x * video.videoWidth,
+    y:p.y * video.videoHeight
+}));
+
+            drawConnectors(
+                ctx,
+                landmarks,
+                HAND_CONNECTIONS,
+                {color:"#00ff00",lineWidth:3}
+            );
+
+            drawLandmarks(
+                ctx,
+                landmarks,
+                {color:"#ff0000",radius:4}
+            );
+
+
+            if(hand.score>maxScore)
+                maxScore=hand.score;
+
+
+            if(hand.label==="Left")
+    rightDetected=true;
+else
+    leftDetected=true;
+
+
+            // ===============================
+            // DETEKSI GERAKAN TANGAN
+            // ===============================
+
+            let wrist=pts[0];
+
+            if(window.lastHandPosition){
+
+                let distance=Math.sqrt(
+                    Math.pow(wrist.x-window.lastHandPosition.x,2)+
+                    Math.pow(wrist.y-window.lastHandPosition.y,2)
+                );
+
+
+                if(distance>15){
+                    handMoving=true;
+                }
+
+            }
+
+            window.lastHandPosition=wrist;
+
+        }
+
+
+        document.getElementById("conf").innerHTML=
+        Math.round(maxScore*100)+"%";
+
+
+    }else{
+
+        document.getElementById("conf").innerHTML="0%";
+
+    }
+
+
+
+    // ===============================
+    // LOGIKA CYCLE TIME
+    // ===============================
+
+    if(handMoving && analysisRunning){
+
+        window.lastMovementTime=performance.now();
+
+
+        if(currentStage==="WAITING"){
+
+            cycleStartTime=performance.now();
+            currentStage="STARTED";
+
+            addLog("Cycle dimulai - Operator bekerja");
+
+        }
+
+    }
+
+
+
+    // tangan berhenti 1 detik = selesai
+
+   if(
+    analysisRunning &&
+    currentStage==="STARTED" &&
+    performance.now()-window.lastMovementTime>1000
+){
+
+        let duration=
+        (performance.now()-cycleStartTime)/1000;
+
+
+        document.getElementById("cycle").innerHTML=
+        duration.toFixed(2)+" s";
+
+
+       cycleHistory.push(duration);
+
+addLog(
+"Cycle "+cycleHistory.length+
+" selesai : "+
+duration.toFixed(2)+" detik"
+);
+
+
+        currentStage="WAITING";
+
+
+    }
+
+
+
+    document.getElementById("rightStatus").innerHTML=
+    rightDetected?"Detected":"Not Detected";
+
+
+    document.getElementById("leftStatus").innerHTML=
+    leftDetected?"Detected":"Not Detected";
+
+
+    document.getElementById("rightStatus").style.color=
+    rightDetected?"#10b981":"white";
+
+
+    document.getElementById("leftStatus").style.color=
+    leftDetected?"#10b981":"white";
+
+
+    updateFPS();
+
+}
+
+
+function updateFPS(){
+    frameCount++; let now = performance.now();
+    if(now - lastTime >= 1000){ fps = frameCount; frameCount = 0; lastTime = now; document.getElementById("fps").innerHTML = fps; }
+}
+
+function startAnalysis(){
+
+    analysisRunning=true;
+    cycleHistory=[];
+
+    currentStage="WAITING";
+
+    addLog("Analisa Operator Dimulai");
+
+}
+
+
+function stopAnalysis(){
+
+    analysisRunning=false;
+
+    currentStage="WAITING";
+
+
+    if(cycleHistory.length>0){
+
+        let total=
+        cycleHistory.reduce((a,b)=>a+b,0);
+
+        let avg=
+        total/cycleHistory.length;
+
+
+        addLog(
+        "Analisa Berhenti | "+
+        "Total Cycle: "+
+        cycleHistory.length+
+        " | Average: "+
+        avg.toFixed(2)+" s"
+        );
+
+    }else{
+
+        addLog("Belum ada cycle");
+
+    }
+
+}
+</script>
+</body>
+</html>
