@@ -5,10 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>PE Motion Analysis System</title>
 <style>
-    #canvas{
-        width:100%;
-        height:100%;
-    }
+    #canvas{ width:100%; height:100%; }
     *{ margin:0; padding:0; box-sizing:border-box; font-family:Arial,sans-serif; }
     body{ background:#111827; color:white; }
     header{ background:#0f172a; padding:15px; text-align:center; font-size:26px; font-weight:bold; letter-spacing:1px; }
@@ -22,6 +19,8 @@
     .activityLog div{ padding:5px; border-bottom:1px solid #333; font-size:14px; }
     button{ width:100%; padding:12px; background:#2563eb; border:none; border-radius:8px; color:white; font-size:16px; cursor:pointer; transition: background 0.2s; }
     button:hover{ background:#1d4ed8; }
+    .btn-secondary { background: #4b5563; }
+    .btn-secondary:hover { background: #374151; }
 </style>
 </head>
 <body>
@@ -31,9 +30,8 @@
         <div class="card">
             <h2>Live Camera</h2>
             <div id="cameraContainer" style="position:relative; width:100%; border-radius:10px; overflow:hidden;">
-                <!-- Ditambahkan transform: scaleX(-1) agar kamera terlihat natural (mirroring) -->
-                <video id="video" autoplay playsinline muted style="display:block; width:100%; height:auto; border-radius:10px; object-fit:cover; filter:none; z-index:1; transform: scaleX(-1);"></video>
-                <canvas id="canvas" style="position:absolute; top:0; left:0; pointer-events:none; z-index:2; transform: scaleX(-1);"></canvas>
+                <video id="video" autoplay playsinline muted style="display:block; width:100%; height:auto; border-radius:10px; object-fit:cover; filter:none; z-index:1;"></video>
+                <canvas id="canvas" style="position:absolute; top:0; left:0; pointer-events:none; z-index:2;"></canvas>
             </div>
         </div>
         <div class="card">
@@ -60,7 +58,10 @@
             <h2>Activity Log</h2>
             <div class="activityLog" id="log"><div>System Ready...</div></div>
         </div>
-        <div class="card"><button onclick="startCamera()">START CAMERA</button></div>
+        <div class="card">
+            <button id="btnCam" onclick="toggleCamera()" style="margin-bottom: 10px;">START CAMERA</button>
+            <button id="btnSwitch" class="btn-secondary" onclick="switchCameraMode()" style="display: none;">SWITCH CAMERA</button>
+        </div>
     </div>
 </div>
 
@@ -73,42 +74,80 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-let camera, hands, isCameraRunning = false;
+let camera = null, hands = null, isCameraRunning = false;
+let currentFacingMode = "user"; 
 let fps = 0, frameCount = 0, lastTime = performance.now();
 let cycleStartTime = null, currentStage = "WAITING", liveTimerInterval = null;
 let analysisRunning = false;
 window.lastMovementTime = performance.now();
 let cycleHistory = [];
-window.lastHandPosition = null; // Inisialisasi awal objek posisi
+window.lastHandPosition = null;
+
+function applyMirrorEffect() {
+    if (currentFacingMode === "user") {
+        video.style.transform = "scaleX(-1)";
+        canvas.style.transform = "scaleX(-1)";
+    } else {
+        video.style.transform = "none";
+        canvas.style.transform = "none";
+    }
+}
 
 async function startCamera(){
-    if(isCameraRunning) return;
-    isCameraRunning = true;
     try {
         hands = new Hands({
-            locateFile: (file) => {
-                return `https://jsdelivr.net{file}`;
-            }
+            locateFile: (file) => `https://jsdelivr.net{file}`
         });
         hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onResults);
 
-        camera = new Camera(video,{
-            facingMode:"user",
-            width: {ideal:1280},
-            height:{ideal:720},
-            onFrame: async () => {
-                await hands.send({image:video});
-            }
+        applyMirrorEffect();
+
+        camera = new Camera(video, {
+            facingMode: currentFacingMode,
+            width: {ideal: 1280},
+            height: {ideal: 720},
+            onFrame: async () => { await hands.send({image: video}); }
         });
+        
         await camera.start();
-        addLog("Camera Started");
+        isCameraRunning = true;
+        document.getElementById("btnCam").innerHTML = "STOP CAMERA";
+        document.getElementById("btnCam").style.background = "#dc2626";
+        document.getElementById("btnSwitch").style.display = "block";
+        addLog("Camera Started (" + (currentFacingMode === "user" ? "Front" : "Rear") + ")");
         startLiveTimer();
     } catch(err) {
         console.error(err); 
         alert("Gagal menjalankan kamera: " + err); 
         isCameraRunning = false;
     }
+}
+
+async function stopCamera() {
+    if (camera) { await camera.stop(); camera = null; }
+    isCameraRunning = false;
+    document.getElementById("btnCam").innerHTML = "START CAMERA";
+    document.getElementById("btnCam").style.background = "#2563eb";
+    document.getElementById("btnSwitch").style.display = "none";
+    addLog("Camera Stopped");
+}
+
+function toggleCamera() {
+    if (isCameraRunning) {
+        stopCamera();
+        if (analysisRunning) stopAnalysis();
+    } else {
+        startCamera();
+    }
+}
+
+async function switchCameraMode() {
+    if (!isCameraRunning) return;
+    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
+    addLog("Switching camera...");
+    await stopCamera();
+    await startCamera();
 }
 
 function addLog(text){
@@ -139,44 +178,29 @@ function startLiveTimer() {
 function onResults(results){
     resizeCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    let rightDetected = false;
-    let leftDetected = false;
-    let maxScore = 0;
-    let handMoving = false;
+    let rightDetected = false, leftDetected = false, maxScore = 0, handMoving = false;
 
     if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
         for(let i = 0; i < results.multiHandLandmarks.length; i++){
             const landmarks = results.multiHandLandmarks[i];
             const hand = results.multiHandedness[i];
-
-            const pts = landmarks.map(p => ({
-                x: p.x * video.videoWidth,
-                y: p.y * video.videoHeight
-            }));
+            const pts = landmarks.map(p => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight }));
 
             drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: "#00ff00", lineWidth: 3});
             drawLandmarks(ctx, landmarks, {color: "#ff0000", radius: 4});
 
             if(hand.score > maxScore) maxScore = hand.score;
 
-            // Memperbaiki deteksi akibat efek kamera mirror
-            if(hand.label === "Left") rightDetected = true;
-            else leftDetected = true;
+            if (currentFacingMode === "user") {
+                if(hand.label === "Left") rightDetected = true; else leftDetected = true;
+            } else {
+                if(hand.label === "Left") leftDetected = true; else rightDetected = true;
+            }
 
-            // Perbaikan Bug Titik Wrist
             let wrist = pts[0]; 
-
             if(window.lastHandPosition){
-                let distance = Math.sqrt(
-                    Math.pow(wrist.x - window.lastHandPosition.x, 2) +
-                    Math.pow(wrist.y - window.lastHandPosition.y, 2)
-                );
-
-                // Menggunakan jarak ambang batas 10-15 piksel untuk deteksi gerak
-                if(distance > 12){
-                    handMoving = true;
-                }
+                let distance = Math.sqrt(Math.pow(wrist.x - window.lastHandPosition.x, 2) + Math.pow(wrist.y - window.lastHandPosition.y, 2));
+                if(distance > 12) handMoving = true;
             }
             window.lastHandPosition = wrist;
         }
@@ -185,12 +209,8 @@ function onResults(results){
         document.getElementById("conf").innerHTML = "0%";
     }
 
-    // ===============================
-    // LOGIKA CYCLE TIME
-    // ===============================
     if(handMoving && analysisRunning){
         window.lastMovementTime = performance.now();
-
         if(currentStage === "WAITING"){
             cycleStartTime = performance.now();
             currentStage = "STARTED";
@@ -198,62 +218,40 @@ function onResults(results){
         }
     }
 
-    // Tangan berhenti selama 1 detik = Siklus Selesai
     if(analysisRunning && currentStage === "STARTED" && (performance.now() - window.lastMovementTime > 1000)){
-        // Dikurangi 1000ms (1 detik) sebagai kompensasi waktu jeda diam operator
         let duration = ((performance.now() - cycleStartTime) - 1000) / 1000;
         if(duration < 0) duration = 0;
-
         document.getElementById("cycle").innerHTML = duration.toFixed(2) + " s";
         cycleHistory.push(duration);
-
         addLog("Cycle " + cycleHistory.length + " selesai : " + duration.toFixed(2) + " detik");
         currentStage = "WAITING";
     }
 
-    // Update Status Teks pada Tampilan UI
     document.getElementById("rightStatus").innerHTML = rightDetected ? "Detected" : "Not Detected";
     document.getElementById("leftStatus").innerHTML = leftDetected ? "Detected" : "Not Detected";
     document.getElementById("rightStatus").style.color = rightDetected ? "#10b981" : "white";
     document.getElementById("leftStatus").style.color = leftDetected ? "#10b981" : "white";
-
     updateFPS();
 }
 
 function updateFPS(){
     frameCount++; 
     let now = performance.now();
-    if(now - lastTime >= 1000){ 
-        fps = frameCount; 
-        frameCount = 0; 
-        lastTime = now; 
-        document.getElementById("fps").innerHTML = fps; 
-    }
+    if(now - lastTime >= 1000){ fps = frameCount; frameCount = 0; lastTime = now; document.getElementById("fps").innerHTML = fps; }
 }
 
 function startAnalysis(){
-    if(!isCameraRunning) {
-        alert("Silakan aktifkan kamera terlebih dahulu!");
-        return;
-    }
-    analysisRunning = true;
-    cycleHistory = [];
-    currentStage = "WAITING";
-    document.getElementById("cycle").innerHTML = "0.00 s";
-    addLog("Analisa Operator Dimulai");
+    if(!isCameraRunning) { alert("Silakan aktifkan kamera terlebih dahulu!"); return; }
+    analysisRunning = true; cycleHistory = []; currentStage = "WAITING";
+    document.getElementById("cycle").innerHTML = "0.00 s"; addLog("Analisa Operator Dimulai");
 }
 
 function stopAnalysis(){
-    analysisRunning = false;
-    currentStage = "WAITING";
-
+    analysisRunning = false; currentStage = "WAITING";
     if(cycleHistory.length > 0){
         let total = cycleHistory.reduce((a, b) => a + b, 0);
         let avg = total / cycleHistory.length;
-
-        addLog(
-            "Analisa Berhenti | Total Cycle: " + cycleHistory.length + " | Average: " + avg.toFixed(2) + " s"
-        );
+        addLog("Analisa Berhenti | Total Cycle: " + cycleHistory.length + " | Average: " + avg.toFixed(2) + " s");
     } else {
         addLog("Belum ada cycle");
     }
