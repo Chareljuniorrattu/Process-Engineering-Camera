@@ -66,13 +66,14 @@
 </div>
 
 <!-- PEMBATALAN URL CDN YANG RUSAK, DIGANTI KE ALAMAT STABIL RESMI -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+    video.addEventListener("loadedmetadata", resizeCanvas);
 
 let camera = null, hands = null, isCameraRunning = false;
 let currentFacingMode = "user"; 
@@ -98,22 +99,34 @@ function applyMirrorEffect() {
 async function startCamera(){
     try {
         hands = new Hands({
-            locateFile: (file) =>
-`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+});
         });
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.setOptions({
+    maxNumHands:2,
+    modelComplexity:1,
+    minDetectionConfidence:0.7,
+    minTrackingConfidence:0.7
+});
         hands.onResults(onResults);
+    console.log("MediaPipe Hands Loaded");
 
         applyMirrorEffect();
 
-        camera = new Camera(video, {
-            facingMode: currentFacingMode,
-            width: {ideal: 1280},
-            height: {ideal: 720},
-            onFrame: async () => { await hands.send({image: video}); }
-        });
+        camera = new Camera(video,{
+    onFrame: async () => {
+        if(video.readyState >= 2){
+            await hands.send({ image: video });
+        }
+    },
+    width:1280,
+    height:720
+});
         
         await camera.start();
+    console.log("Camera Started");
         isCameraRunning = true;
         document.getElementById("btnCam").innerHTML = "STOP CAMERA";
         document.getElementById("btnCam").style.background = "#dc2626";
